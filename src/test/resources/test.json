@@ -1,0 +1,7 @@
+{
+  "messageType": "TEXT",
+  "content": "test message sent by user",
+  "sender": "test-user",
+  "recipient": "test-rec-user",
+  "recipientType": "USER"
+}

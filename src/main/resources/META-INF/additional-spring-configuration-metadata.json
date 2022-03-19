@@ -1,0 +1,23 @@
+{
+  "properties": [
+    {
+      "name": "chat.queues.output",
+      "type": "java.lang.String",
+      "description": "Rabbit output queue name."
+  },
+    {
+      "name": "chat.queues.input-0",
+      "type": "java.lang.String",
+      "description": "Rabbit first input queue name."
+    },
+    {
+      "name": "chat.queues.input-1",
+      "type": "java.lang.String",
+      "description": "Rabbit second input queue name."
+    },
+    {
+      "name": "chat.exhanges.output",
+      "type": "java.lang.String",
+      "description": "Rabbit output exchange name."
+  }
+] }

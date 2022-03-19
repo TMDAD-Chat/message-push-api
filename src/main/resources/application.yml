@@ -1,0 +1,16 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
+chat:
+  exchanges:
+    input: "output-messages"
+
+spring:
+  application:
+    name: "message-push-api"
+  mvc:
+    async:
+      request-timeout: -1
