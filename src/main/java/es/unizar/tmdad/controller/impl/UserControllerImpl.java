@@ -2,6 +2,7 @@ package es.unizar.tmdad.controller.impl;
 
 import es.unizar.tmdad.controller.UserController;
 import es.unizar.tmdad.service.MessageService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -9,6 +10,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/user")
+@Slf4j
 public class UserControllerImpl implements UserController {
 
     private final MessageService messageService;
@@ -27,6 +29,7 @@ public class UserControllerImpl implements UserController {
         emitter.onCompletion(()->messageService.removeSseEmmiter(topic, emitter));
         emitter.onTimeout(()->messageService.removeSseEmmiter(topic, emitter));
 
+        log.info("Logging user {}", topic);
 
         return emitter;
     }

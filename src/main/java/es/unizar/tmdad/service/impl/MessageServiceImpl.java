@@ -1,5 +1,6 @@
 package es.unizar.tmdad.service.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import es.unizar.tmdad.adt.MessageIn;
 import es.unizar.tmdad.service.MessageService;
@@ -46,12 +47,21 @@ public class MessageServiceImpl implements MessageService {
         switch (msg.getRecipientType()){
             case ROOM:
                 //NOT IMPLEMENTED
+                //topic = "room." + ...;
                 break;
             case USER:
                 topic = "user." + msg.getRecipient();
                 break;
+            case GLOBAL:
+                //TODO GLOBAL MESSAGES
+                break;
         }
 
+        forwardMessageToTopic(msg, topic);
+
+    }
+
+    private void forwardMessageToTopic(MessageIn msg, String topic) throws JsonProcessingException {
         if(Objects.nonNull(topic)){
             List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(topic);
             String msgAsString = objectMapper.writeValueAsString(msg);
@@ -71,6 +81,5 @@ public class MessageServiceImpl implements MessageService {
                 }
             }
         }
-
     }
 }

@@ -1,13 +1,13 @@
 package es.unizar.tmdad.listener;
 
-import com.fasterxml.jackson.core.*;
-import com.fasterxml.jackson.databind.*;
-import es.unizar.tmdad.adt.*;
-import es.unizar.tmdad.service.*;
-import lombok.extern.slf4j.*;
-import org.springframework.stereotype.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import es.unizar.tmdad.adt.MessageIn;
+import es.unizar.tmdad.service.MessageService;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
-import java.io.*;
+import java.io.IOException;
 
 @Slf4j
 @Component
@@ -25,7 +25,8 @@ public class MessageListener {
         log.info("Processing msg {}.", in);
     }
 
-    public void apply(String input) throws JsonProcessingException {
+    @SneakyThrows
+    public void apply(String input) {
         MessageIn msg = objectMapper.readValue(input, MessageIn.class);
         this.apply(msg);
     }
