@@ -46,8 +46,7 @@ public class MessageServiceImpl implements MessageService {
         String topic = null;
         switch (msg.getRecipientType()){
             case ROOM:
-                //NOT IMPLEMENTED
-                //topic = "room." + ...;
+                topic = "room." + msg.getRecipient();
                 break;
             case USER:
                 topic = "user." + msg.getRecipient();
