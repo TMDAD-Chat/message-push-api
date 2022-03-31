@@ -44,6 +44,7 @@ public class MessageServiceImpl implements MessageService {
     @Override
     public void processMessage(MessageIn msg) throws IOException {
         String topic = null;
+        boolean globalMessage = false;
         switch (msg.getRecipientType()){
             case ROOM:
                 //NOT IMPLEMENTED
@@ -53,33 +54,48 @@ public class MessageServiceImpl implements MessageService {
                 topic = "user." + msg.getRecipient();
                 break;
             case GLOBAL:
-                //TODO GLOBAL MESSAGES
+                globalMessage = true;
                 break;
         }
 
-        forwardMessageToTopic(msg, topic);
+        if(Objects.nonNull(topic)) {
+            forwardMessageToTopic(msg, topic);
+        }else if(globalMessage){
+            forwardMessageToAllUsers(msg);
+        }
 
     }
 
     private void forwardMessageToTopic(MessageIn msg, String topic) throws JsonProcessingException {
-        if(Objects.nonNull(topic)){
-            List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(topic);
-            String msgAsString = objectMapper.writeValueAsString(msg);
-            if(!Objects.isNull(emmitersForTopic)){
-                List<SseEmitter> deadEmitters = new ArrayList<>();
-                emmitersForTopic.forEach(emitter -> {
-                    try {
-                        emitter.send(msgAsString);
-                    } catch (IOException e) {
-                        deadEmitters.add(emitter);
-                    }
-                });
-                if(!deadEmitters.isEmpty()){
-                    log.info("Could not send message to {} emmiter/s. Removing them from list...", deadEmitters.size());
-                    emmitersForTopic.removeAll(deadEmitters);
-                    this.sseEmmiterList.put(topic, emmitersForTopic);
-                }
+        List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(topic);
+        String msgAsString = objectMapper.writeValueAsString(msg);
+        if(!Objects.isNull(emmitersForTopic)){
+            sendMessageToEmitters(msgAsString, topic, emmitersForTopic);
+        }
+    }
+
+    private void forwardMessageToAllUsers(MessageIn msg) throws JsonProcessingException {
+        String msgAsString = objectMapper.writeValueAsString(msg);
+        this.sseEmmiterList.forEach((key, value) -> {
+            if (key.startsWith("user")) {
+                sendMessageToEmitters(msgAsString, key, value);
             }
+        });
+    }
+
+    private void sendMessageToEmitters(String msgAsString, String key, List<SseEmitter> value) {
+        List<SseEmitter> deadEmitters = new ArrayList<>();
+        value.forEach(emitter -> {
+            try {
+                emitter.send(msgAsString);
+            } catch (IOException e) {
+                deadEmitters.add(emitter);
+            }
+        });
+        if(!deadEmitters.isEmpty()){
+            log.info("Could not send message to {} emmiter/s. Removing them from list...", deadEmitters.size());
+            value.removeAll(deadEmitters);
+            this.sseEmmiterList.put(key, value);
         }
     }
 }
