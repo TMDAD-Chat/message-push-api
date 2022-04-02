@@ -25,7 +25,7 @@ public class RoomControllerImpl implements RoomController {
     @GetMapping("/{id}")
     public SseEmitter sendNewTextMessage(@PathVariable("id") String userId) {
         final SseEmitter emitter = new SseEmitter();
-        final String topic = "user." + userId;
+        final String topic = "room." + userId;
         messageService.addSseEmmiter(topic, emitter);
 
         emitter.onCompletion(()->messageService.removeSseEmmiter(topic, emitter));
