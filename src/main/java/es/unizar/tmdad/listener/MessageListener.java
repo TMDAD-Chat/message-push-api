@@ -1,7 +1,7 @@
 package es.unizar.tmdad.listener;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import es.unizar.tmdad.adt.MessageIn;
+import es.unizar.tmdad.adt.MessageListIn;
 import es.unizar.tmdad.service.MessageService;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -21,18 +21,14 @@ public class MessageListener {
         this.objectMapper = objectMapper;
     }
 
-    private void logs(MessageIn in){
-        log.info("Processing msg {}.", in);
-    }
-
     @SneakyThrows
     public void apply(String input) {
-        MessageIn msg = objectMapper.readValue(input, MessageIn.class);
+        MessageListIn msg = objectMapper.readValue(input, MessageListIn.class);
         this.apply(msg);
     }
 
-    public void apply(MessageIn messageInFlux) {
-        this.logs(messageInFlux);
+    public void apply(MessageListIn messageInFlux) {
+        log.info("Processing msg {}.", messageInFlux);
         try {
             messageService.processMessage(messageInFlux);
         } catch (IOException e) {

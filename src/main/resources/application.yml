@@ -7,8 +7,17 @@ management:
 chat:
   exchanges:
     input: "output-messages"
+    old-messages: "old-message-requests"
 
 spring:
+  jpa:
+    hibernate:
+      ddl-auto: update # WILL BE REMOVED WHEN LIQUIBASE IS RUNNING
+    show-sql: true
+  datasource:
+    url: jdbc:postgresql://localhost:5432/message-push-api
+    username: postgres
+    password: postgres
   application:
     name: "message-push-api"
   mvc:

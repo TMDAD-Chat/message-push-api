@@ -30,6 +30,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-amqp'
 	implementation 'org.projectlombok:lombok'
 	implementation 'org.mapstruct:mapstruct:1.4.2.Final'
+	implementation 'io.micrometer:micrometer-registry-prometheus'
 
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
@@ -41,8 +42,7 @@ dependencies {
 	testImplementation 'org.springframework.amqp:spring-rabbit-test'
 
 	//REMOVE WHEN DB IS CONNECTED
-	runtimeOnly 'com.h2database:h2'
-	//runtimeOnly 'org.postgresql:postgresql'
+	runtimeOnly 'org.postgresql:postgresql'
 	//implementation 'org.liquibase:liquibase-core'
 }
 
