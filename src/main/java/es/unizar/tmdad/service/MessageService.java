@@ -8,7 +8,7 @@ import java.io.IOException;
 public interface MessageService {
 
     void addSseEmmiter(String topic, String user, SseEmitter emitter);
-    void removeSseEmmiter(String topic, SseEmitter emitter);
+    void removeSseEmmiter(String topic, String user);
     void processMessage(MessageListIn msg) throws IOException;
 
 }

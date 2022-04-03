@@ -21,14 +21,14 @@ public class UserControllerImpl implements UserController {
 
     @Override
     @RequestMapping("/{id}")
-    public SseEmitter getMessagesOfUser(@PathVariable("id") String userId) {
+    public SseEmitter getMessagesOfUser(@PathVariable("id") String username) {
         final SseEmitter emitter = new SseEmitter();
-        final String topic = "user." + userId;
-        messageService.addSseEmmiter(topic, userId, emitter);
+        final String topic = "user." + username;
+        messageService.addSseEmmiter(topic, username, emitter);
 
-        emitter.onError((callback)->messageService.removeSseEmmiter(topic, emitter));
-        emitter.onCompletion(()->messageService.removeSseEmmiter(topic, emitter));
-        emitter.onTimeout(()->messageService.removeSseEmmiter(topic, emitter));
+        emitter.onError((callback)->messageService.removeSseEmmiter(topic, username));
+        emitter.onCompletion(()->messageService.removeSseEmmiter(topic, username));
+        emitter.onTimeout(()->messageService.removeSseEmmiter(topic, username));
 
         log.info("Logging user {}", topic);
 

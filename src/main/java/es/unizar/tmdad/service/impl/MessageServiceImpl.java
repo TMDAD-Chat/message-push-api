@@ -10,11 +10,14 @@ import es.unizar.tmdad.config.Constants;
 import es.unizar.tmdad.repository.MessageTimestampRepository;
 import es.unizar.tmdad.repository.entity.MessageTimestampEntity;
 import es.unizar.tmdad.service.MessageService;
+import lombok.Builder;
+import lombok.Data;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -30,12 +33,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 public class MessageServiceImpl implements MessageService {
 
-    private final Map<String, List<SseEmitter>> sseEmmiterList = new HashMap<>();
+    private final Map<String, List<ClientConnectedToTopic>> sseEmmiterList = new HashMap<>();
     private final ObjectMapper objectMapper;
     private final MessageTimestampRepository messageTimestampRepository;
     private final RabbitTemplate rabbitTemplate;
@@ -53,22 +57,31 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void addSseEmmiter(String topic, String user, SseEmitter emitter) {
-        requestUnreadMessagesForTopicAndUser(topic, user);
-        requestUnreadMessagesForTopicAndUser(Constants.GLOBAL_MESSAGE_DB_TYPE, user);
+        List<String> requests = new ArrayList<>();
+        String requestUUID = requestUnreadMessagesForTopicAndUser(topic, user);
+        requests.add(requestUUID);
+        if(StringUtils.startsWithIgnoreCase(topic, "user")) {
+            String globalUUIDRequest = requestUnreadMessagesForTopicAndUser(Constants.GLOBAL_MESSAGE_DB_TYPE, user);
+            requests.add(globalUUIDRequest);
+        }
 
-        List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(topic);
+        var emmitersForTopic = this.sseEmmiterList.get(topic);
         if(Objects.isNull(emmitersForTopic)){
             emmitersForTopic = Collections.synchronizedList(new ArrayList<>());
         }
 
         synchronized (emmitersForTopic) {
-            emmitersForTopic.add(emitter);
+            emmitersForTopic.add(ClientConnectedToTopic.builder()
+                            .user(user)
+                            .emitter(emitter)
+                            .pendingMessageRequests(requests)
+                    .build());
             this.sseEmmiterList.put(topic, emmitersForTopic);
         }
         this.onlineUsersGauge.incrementAndGet();
     }
 
-    private void requestUnreadMessagesForTopicAndUser(String topic, String user) {
+    private String requestUnreadMessagesForTopicAndUser(String topic, String user) {
         var messageTimestampEntity = messageTimestampRepository.findById(MessageTimestampEntity.MessageTimestampCompositeKey
                 .builder()
                         .topic(topic)
@@ -105,18 +118,23 @@ public class MessageServiceImpl implements MessageService {
         if(Objects.nonNull(messageRequestStr)) {
             this.rabbitTemplate.convertAndSend(oldMessagesExchangeName, "", messageRequestStr);
         }
+
+        return requestUUID;
     }
 
     @Override
-    public void removeSseEmmiter(String topic, SseEmitter emitter) {
+    public void removeSseEmmiter(String topic, String user) {
         log.info("Removing emitter for topic {}.", topic);
-        List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(topic);
+        List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(topic);
         if(!Objects.isNull(emmitersForTopic)){
-            if(emmitersForTopic.remove(emitter)){
+            var newEmmiters = emmitersForTopic.stream()
+                    .filter(clientConnectedToTopic -> !Objects.equals(user, clientConnectedToTopic.getUser()))
+                    .collect(Collectors.toList());
+            if(!Objects.equals(newEmmiters.size(), emmitersForTopic.size())){
                 this.onlineUsersGauge.decrementAndGet();
+                this.sseEmmiterList.put(topic, newEmmiters);
             }
         }
-        this.sseEmmiterList.put(topic, emmitersForTopic);
     }
 
     @Override
@@ -124,9 +142,11 @@ public class MessageServiceImpl implements MessageService {
         if(!msg.getMessages().isEmpty()) {
             switch (msg.getRecipientType()){
                 case ROOM:
-                    forwardMessageToTopic(msg, msg.getRecipient(), "room." + msg.getRecipient());
+                    String topic = "room." + msg.getRecipient();
+                    String user = getUserWhoRequestedMessage(topic, msg.getRequestId());
+                    forwardMessageToTopic(msg, user, topic);
                     log.info("Received {} messages for user {} in topic room.{}.",
-                            msg.getMessages().size(), msg.getRecipient(), msg.getRecipient());
+                            msg.getMessages().size(), user, msg.getRecipient());
                     break;
                 case USER:
                     forwardMessageToTopic(msg, msg.getRecipient(), "user." + msg.getRecipient());
@@ -141,12 +161,29 @@ public class MessageServiceImpl implements MessageService {
 
     }
 
+    private String getUserWhoRequestedMessage(String topic, String requestId) {
+        var list = this.sseEmmiterList.get(topic);
+        if(Objects.nonNull(list)){
+            var user = list.stream()
+                    .filter(clientConnectedToTopic -> clientConnectedToTopic.getPendingMessageRequests().contains(requestId))
+                    .collect(Collectors.toList());
+            if(user.size() > 1){
+                log.error("More than one user with the same request Id {} in the same room... Picking only the first one.", requestId);
+            }
+            if(!user.isEmpty()){
+                return user.get(0).getUser();
+            }
+        }
+        log.error("No user found for request {}", requestId);
+        return null;
+    }
+
     private void forwardMessageToTopic(MessageListIn msg, String user, String topic) throws JsonProcessingException {
         String msgAsString = objectMapper.writeValueAsString(msg);
 
-        List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(topic);
+        List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(topic);
         if(!Objects.isNull(emmitersForTopic)){
-            sendMessageToEmitters(msgAsString, topic, emmitersForTopic);
+            sendMessageToEmitters(msgAsString, msg.getRequestId(), user, topic, emmitersForTopic);
             updateLastReadMessage(topic, user, msg);
         }
     }
@@ -188,27 +225,30 @@ public class MessageServiceImpl implements MessageService {
         if(Objects.isNull(msg.getRecipient())) {
             this.sseEmmiterList.forEach((key, value) -> {
                 if (key.startsWith("user")) {
-                    sendMessageToEmitters(msgAsString, key, value);
+                    sendMessageToEmitters(msgAsString, msg.getRequestId(), null, key, value);
                     updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, key.split("\\.")[1], msg);
                 }
             });
         }else{
             String user = msg.getRecipient();
             String fakeGlobalTopic = "user." + user;
-            List<SseEmitter> emmitersForTopic = this.sseEmmiterList.get(fakeGlobalTopic);
+            List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(fakeGlobalTopic);
             if(!Objects.isNull(emmitersForTopic)){
-                sendMessageToEmitters(msgAsString, fakeGlobalTopic, emmitersForTopic);
+                sendMessageToEmitters(msgAsString, msg.getRequestId(), user, fakeGlobalTopic, emmitersForTopic);
                 updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, user, msg);
             }
         }
     }
 
-    private void sendMessageToEmitters(String msgAsString, String key, List<SseEmitter> value) {
-        List<SseEmitter> deadEmitters = new ArrayList<>();
+    private void sendMessageToEmitters(String msgAsString, String requestId, String user, String key, List<ClientConnectedToTopic> value) {
+        List<ClientConnectedToTopic> deadEmitters = new ArrayList<>();
         synchronized (value) {
             value.forEach(emitter -> {
                 try {
-                    emitter.send(msgAsString);
+                    if(Objects.isNull(user) || Objects.equals(user, emitter.getUser())) {
+                        emitter.getEmitter().send(msgAsString);
+                    }
+                    emitter.getPendingMessageRequests().remove(requestId);
                 } catch (IOException e) {
                     deadEmitters.add(emitter);
                 }
@@ -219,5 +259,13 @@ public class MessageServiceImpl implements MessageService {
             value.removeAll(deadEmitters);
             this.sseEmmiterList.put(key, value);
         }
+    }
+
+    @Data
+    @Builder
+    private static class ClientConnectedToTopic{
+        private SseEmitter emitter;
+        private String user;
+        private List<String> pendingMessageRequests;
     }
 }
