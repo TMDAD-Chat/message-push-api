@@ -1,9 +1,9 @@
 package es.unizar.tmdad.controller;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 public interface RoomController {
 
-    ResponseEntity<Void> sendNewTextMessage(String groupId);
-
+    SseEmitter sendNewTextMessage(String groupId);
 }
