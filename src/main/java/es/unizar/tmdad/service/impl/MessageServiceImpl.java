@@ -44,15 +44,17 @@ public class MessageServiceImpl implements MessageService {
     private final MessageTimestampRepository messageTimestampRepository;
     private final RabbitTemplate rabbitTemplate;
     private final AtomicInteger onlineUsersGauge;
+    private final AtomicInteger onlineRoomsGauge;
 
     @Value("${chat.exchanges.old-messages}")
     private String oldMessagesExchangeName;
 
-    public MessageServiceImpl(ObjectMapper objectMapper, MessageTimestampRepository messageTimestampRepository, RabbitTemplate rabbitTemplate, AtomicInteger onlineUsersGauge) {
+    public MessageServiceImpl(ObjectMapper objectMapper, MessageTimestampRepository messageTimestampRepository, RabbitTemplate rabbitTemplate, AtomicInteger onlineUsersGauge, AtomicInteger onlineRoomsGauge) {
         this.objectMapper = objectMapper;
         this.messageTimestampRepository = messageTimestampRepository;
         this.rabbitTemplate = rabbitTemplate;
         this.onlineUsersGauge = onlineUsersGauge;
+        this.onlineRoomsGauge = onlineRoomsGauge;
     }
 
     @Override
@@ -68,6 +70,9 @@ public class MessageServiceImpl implements MessageService {
         var emmitersForTopic = this.sseEmmiterList.get(topic);
         if(Objects.isNull(emmitersForTopic)){
             emmitersForTopic = Collections.synchronizedList(new ArrayList<>());
+            if(StringUtils.startsWithIgnoreCase(topic, "room")){
+                this.onlineRoomsGauge.incrementAndGet();
+            }
         }
 
         synchronized (emmitersForTopic) {
@@ -133,6 +138,9 @@ public class MessageServiceImpl implements MessageService {
                     .collect(Collectors.toList());
             if(!Objects.equals(newEmmiters.size(), emmitersForTopic.size())){
                 this.onlineUsersGauge.decrementAndGet();
+                if(StringUtils.startsWithIgnoreCase(topic, "room") && newEmmiters.isEmpty()){
+                    this.onlineRoomsGauge.decrementAndGet();
+                }
                 this.sseEmmiterList.put(topic, newEmmiters);
             }
         }
