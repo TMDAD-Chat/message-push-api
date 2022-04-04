@@ -99,6 +99,7 @@ public class MessageServiceImpl implements MessageService {
             actualRecipientType = RecipientType.USER;
         }else if(topic.startsWith("room")){
             actualRecipientType = RecipientType.ROOM;
+            user = topic.split("\\.")[1];
         }
 
         MessageRequest messageRequest = MessageRequest.builder()
@@ -179,16 +180,16 @@ public class MessageServiceImpl implements MessageService {
     }
 
     private void forwardMessageToTopic(MessageListIn msg, String user, String topic) throws JsonProcessingException {
-        String msgAsString = objectMapper.writeValueAsString(msg);
-
         List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(topic);
         if(!Objects.isNull(emmitersForTopic)){
-            sendMessageToEmitters(msgAsString, msg.getRequestId(), user, topic, emmitersForTopic);
-            updateLastReadMessage(topic, user, msg);
+            sendMessageToEmitters(msg, msg.getRequestId(), user, topic, emmitersForTopic);
         }
     }
 
     private void updateLastReadMessage(String topic, String user, MessageListIn messageList) {
+        if(Objects.isNull(user)){
+            log.info("Tried to update last read message for user null in topic {}", topic);
+        }
         var messageTimestampEntity = messageTimestampRepository.findById(MessageTimestampEntity.MessageTimestampCompositeKey
                 .builder()
                 .topic(topic)
@@ -221,11 +222,12 @@ public class MessageServiceImpl implements MessageService {
     }
 
     private void forwardMessageToAllUsers(MessageListIn msg) throws JsonProcessingException {
-        String msgAsString = objectMapper.writeValueAsString(msg);
         if(Objects.isNull(msg.getRecipient())) {
             this.sseEmmiterList.forEach((key, value) -> {
                 if (key.startsWith("user")) {
-                    sendMessageToEmitters(msgAsString, msg.getRequestId(), null, key, value);
+                    try {
+                        sendMessageToEmitters(msg, msg.getRequestId(), null, key, value);
+                    } catch (JsonProcessingException ignored) {}
                     updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, key.split("\\.")[1], msg);
                 }
             });
@@ -234,19 +236,23 @@ public class MessageServiceImpl implements MessageService {
             String fakeGlobalTopic = "user." + user;
             List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(fakeGlobalTopic);
             if(!Objects.isNull(emmitersForTopic)){
-                sendMessageToEmitters(msgAsString, msg.getRequestId(), user, fakeGlobalTopic, emmitersForTopic);
+                sendMessageToEmitters(msg, msg.getRequestId(), user, fakeGlobalTopic, emmitersForTopic);
                 updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, user, msg);
             }
         }
     }
 
-    private void sendMessageToEmitters(String msgAsString, String requestId, String user, String key, List<ClientConnectedToTopic> value) {
+    private void sendMessageToEmitters(MessageListIn msg, String requestId, String user, String key, List<ClientConnectedToTopic> value) throws JsonProcessingException {
         List<ClientConnectedToTopic> deadEmitters = new ArrayList<>();
+        String msgAsString = objectMapper.writeValueAsString(msg);
         synchronized (value) {
             value.forEach(emitter -> {
                 try {
-                    if(Objects.isNull(user) || Objects.equals(user, emitter.getUser())) {
+                    if(Objects.isNull(user) || user.isEmpty() || Objects.equals(user, emitter.getUser())) {
                         emitter.getEmitter().send(msgAsString);
+                        if(!StringUtils.startsWithIgnoreCase(key, "global")) {
+                            updateLastReadMessage(key, emitter.getUser(), msg);
+                        }
                     }
                     emitter.getPendingMessageRequests().remove(requestId);
                 } catch (IOException e) {

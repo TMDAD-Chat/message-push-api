@@ -14,4 +14,9 @@ public class PrometheusCustomMetricsConfiguration {
         return meterRegistry.gauge("users_online", new AtomicInteger(0));
     }
 
+    @Bean
+    public AtomicInteger onlineRoomsGauge(MeterRegistry meterRegistry){
+        return meterRegistry.gauge("rooms_online", new AtomicInteger(0));
+    }
+
 }
