@@ -23,6 +23,9 @@ public class RabbitConfiguration {
     @Value("${chat.exchanges.input}")
     private String exchangeName;
 
+    @Value("${chat.exchanges.old-messages}")
+    private String oldMessagesExchangeName;
+
     @Value("${spring.application.name}")
     private String appName;
 
@@ -40,13 +43,18 @@ public class RabbitConfiguration {
         return appName + "." + exchangeName + "." + UUID.randomUUID();
     }
 
-    @Bean
-    FanoutExchange exchange() {
+    @Bean("inputExchange")
+    FanoutExchange inputExchange() {
         return new FanoutExchange(exchangeName, true, false);
     }
 
     @Bean
-    Binding binding(Queue queue, FanoutExchange exchange) {
+    FanoutExchange oldMessageExchange() {
+        return new FanoutExchange(oldMessagesExchangeName, true, false);
+    }
+
+    @Bean
+    Binding binding(Queue queue, @Qualifier("inputExchange") FanoutExchange exchange) {
         return BindingBuilder.bind(queue).to(exchange);
     }
 
