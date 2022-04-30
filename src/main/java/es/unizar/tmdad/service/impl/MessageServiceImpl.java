@@ -27,11 +27,11 @@ import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MessageServiceImpl implements MessageService {
 
-    private final Map<String, List<ClientConnectedToTopic>> sseEmmiterList = new HashMap<>();
+    private final Map<String, List<ClientConnectedToTopic>> sseEmmiterList = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
     private final MessageTimestampRepository messageTimestampRepository;
     private final RabbitTemplate rabbitTemplate;
@@ -143,6 +143,10 @@ public class MessageServiceImpl implements MessageService {
                 }
                 this.sseEmmiterList.put(topic, newEmmiters);
             }
+
+            if(newEmmiters.isEmpty()){
+                this.sseEmmiterList.remove(topic);
+            }
         }
     }
 
@@ -194,9 +198,20 @@ public class MessageServiceImpl implements MessageService {
         }
     }
 
+    private boolean isUserPresent(String tentativeTopic, String user){
+        String topic = Objects.equals(tentativeTopic, Constants.GLOBAL_MESSAGE_DB_TYPE) ? "user." + user : tentativeTopic;
+        var usersInTopic = this.sseEmmiterList.get(topic);
+        return Objects.nonNull(usersInTopic) && usersInTopic
+                .stream()
+                .anyMatch(c -> Objects.equals(c.getUser(), user));
+    }
+
     private void updateLastReadMessage(String topic, String user, MessageListIn messageList) {
         if(Objects.isNull(user)){
             log.info("Tried to update last read message for user null in topic {}", topic);
+        }else if(!isUserPresent(topic, user)){
+            log.info("User {} is no longer available in the system for topic {}, refusing to update its last read message...", user, topic);
+            return;
         }
         var messageTimestampEntity = messageTimestampRepository.findById(MessageTimestampEntity.MessageTimestampCompositeKey
                 .builder()
@@ -236,7 +251,7 @@ public class MessageServiceImpl implements MessageService {
                     try {
                         sendMessageToEmitters(msg, msg.getRequestId(), null, key, value);
                     } catch (JsonProcessingException ignored) {}
-                    updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, key.split("\\.")[1], msg);
+                    //updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, key.split("\\.")[1], msg);
                 }
             });
         }else{
@@ -245,34 +260,59 @@ public class MessageServiceImpl implements MessageService {
             List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(fakeGlobalTopic);
             if(!Objects.isNull(emmitersForTopic)){
                 sendMessageToEmitters(msg, msg.getRequestId(), user, fakeGlobalTopic, emmitersForTopic);
-                updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, user, msg);
+                //updateLastReadMessage(Constants.GLOBAL_MESSAGE_DB_TYPE, user, msg);
             }
         }
     }
 
     private void sendMessageToEmitters(MessageListIn msg, String requestId, String user, String key, List<ClientConnectedToTopic> value) throws JsonProcessingException {
-        List<ClientConnectedToTopic> deadEmitters = new ArrayList<>();
+        List<String> deadEmitters = new ArrayList<>();
         String msgAsString = objectMapper.writeValueAsString(msg);
         synchronized (value) {
+            int clientsInTopic = value.size();
             value.forEach(emitter -> {
                 try {
                     if(Objects.isNull(user) || user.isEmpty() || Objects.equals(user, emitter.getUser())) {
                         emitter.getEmitter().send(msgAsString);
-                        if(!StringUtils.startsWithIgnoreCase(key, "global")) {
-                            updateLastReadMessage(key, emitter.getUser(), msg);
+
+                        String databaseMessageKey = key;
+
+                        if(Objects.equals(msg.getRecipientType(), RecipientType.GLOBAL)){
+                            databaseMessageKey = Constants.GLOBAL_MESSAGE_DB_TYPE;
                         }
+
+                        updateLastReadMessage(databaseMessageKey, emitter.getUser(), msg);
                     }
                     emitter.getPendingMessageRequests().remove(requestId);
                 } catch (IOException e) {
-                    deadEmitters.add(emitter);
+                    log.info("Closed connection detected, {} remaining for topic {}", clientsInTopic - deadEmitters.size(), key);
+                    deadEmitters.add(emitter.getUser());
                 }
             });
         }
         if(!deadEmitters.isEmpty()){
-            log.info("Could not send message to {} emmiter/s. Removing them from list...", deadEmitters.size());
-            value.removeAll(deadEmitters);
+            log.info("Could not send message to {} emitter/s. Removing them from list...", deadEmitters.size());
+            value = value.stream()
+                    .filter(clientConnectedToTopic -> !deadEmitters.contains(clientConnectedToTopic.getUser()))
+                    .collect(Collectors.toList());
             this.sseEmmiterList.put(key, value);
+
+            int delta = deadEmitters.size();
+            log.info("Decreasing online user gauge by {}", delta);
+            this.onlineUsersGauge.addAndGet(delta);
+            var x = this.onlineUsersGauge.updateAndGet(operand -> operand-delta);
+            log.info("New value: {}", x);
+            if(StringUtils.startsWithIgnoreCase(key, "room")){
+                log.info("Decreasing online room gauge by {}", delta);
+                var y = this.onlineRoomsGauge.updateAndGet(operand -> operand-delta);
+                log.info("New value: {}", y);
+            }
+
+            if(value.isEmpty()){
+                this.sseEmmiterList.remove(key);
+            }
         }
+
     }
 
     @Data
