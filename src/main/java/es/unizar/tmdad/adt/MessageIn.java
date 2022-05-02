@@ -7,6 +7,7 @@ import lombok.Data;
 @Builder
 public class MessageIn {
 
+    private Long id;
     private MessageType messageType;
     private String content;
     private String sender;
