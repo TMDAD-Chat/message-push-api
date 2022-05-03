@@ -11,9 +11,10 @@ chat:
 
 spring:
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: update # WILL BE REMOVED WHEN LIQUIBASE IS RUNNING
-    show-sql: true
+    show-sql: false
   datasource:
     url: jdbc:postgresql://localhost:5432/message-push-api
     username: postgres

@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -58,6 +59,7 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
+    @Transactional
     public void addSseEmmiter(String topic, String user, SseEmitter emitter) {
         List<String> requests = new ArrayList<>();
         String requestUUID = requestUnreadMessagesForTopicAndUser(topic, user);
@@ -129,6 +131,7 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
+    @Transactional
     public void removeSseEmmiter(String topic, String user) {
         log.info("Removing emitter for topic {}.", topic);
         List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(topic);
@@ -151,6 +154,7 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
+    @Transactional
     public void processMessage(MessageListIn msg) throws IOException {
         if(!msg.getMessages().isEmpty()) {
             switch (msg.getRecipientType()){
@@ -162,9 +166,33 @@ public class MessageServiceImpl implements MessageService {
                             msg.getMessages().size(), user, msg.getRecipient());
                     break;
                 case USER:
-                    forwardMessageToTopic(msg, msg.getRecipient(), "user." + msg.getRecipient());
-                    log.info("Received {} messages for user {} in topic user.{}.",
-                            msg.getMessages().size(), msg.getRecipient(), msg.getRecipient());
+                    if(Objects.nonNull(msg.getRequestId()) && StringUtils.startsWithIgnoreCase(msg.getRequestId(), "REQUESTED_BY_RECIPIENT")){
+                        forwardMessageToTopic(msg, msg.getRecipient(), "user." + msg.getRecipient());
+                        msg.setRequestId("");
+                        log.info("Received {} messages for user {} in topic user.{}.", msg.getMessages().size(), msg.getRecipient(), msg.getRecipient());
+                    }else if(Objects.nonNull(msg.getRequestId()) && StringUtils.startsWithIgnoreCase(msg.getRequestId(), "REQUESTED_BY_SENDER")){
+                        var sender = msg.getMessages().get(0).getSender();
+                        msg.setRequestId("");
+                        forwardMessageToTopic(msg, sender, "user." + sender);
+                        log.info("Received {} messages for user {} in topic user.{}.", msg.getMessages().size(), sender, sender);
+                    }else {
+                        forwardMessageToTopic(msg, msg.getRecipient(), "user." + msg.getRecipient());
+                        msg.getMessages().forEach(messageIn -> {
+                            try {
+                                MessageListIn sendMessageList = MessageListIn.builder()
+                                        .recipient(msg.getRecipient())
+                                        .requestId("")
+                                        .recipientType(msg.getRecipientType())
+                                        .messages(List.of(messageIn))
+                                        .build();
+                                forwardMessageToTopic(sendMessageList, messageIn.getSender(), "user." + messageIn.getSender());
+                            } catch (JsonProcessingException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+                        log.info("Received {} messages for user {} in topic user.{}.",
+                                msg.getMessages().size(), msg.getRecipient(), msg.getRecipient());
+                    }
                     break;
                 case GLOBAL:
                     forwardMessageToAllUsers(msg);
@@ -265,14 +293,18 @@ public class MessageServiceImpl implements MessageService {
         }
     }
 
+    //Leaving all SLF4J calls as there is a race condition in this code and it is fixed in almost all possible cases.
     private void sendMessageToEmitters(MessageListIn msg, String requestId, String user, String key, List<ClientConnectedToTopic> value) throws JsonProcessingException {
-        List<String> deadEmitters = new ArrayList<>();
+        List<ClientConnectedToTopic> aliveEmitters = new ArrayList<>();
         String msgAsString = objectMapper.writeValueAsString(msg);
         synchronized (value) {
             int clientsInTopic = value.size();
+            log.info("Emitters: {}", clientsInTopic);
             value.forEach(emitter -> {
+                log.info("New emitter: {}", emitter.getUser());
                 try {
                     if(Objects.isNull(user) || user.isEmpty() || Objects.equals(user, emitter.getUser())) {
+                        log.info(msgAsString);
                         emitter.getEmitter().send(msgAsString);
 
                         String databaseMessageKey = key;
@@ -284,31 +316,32 @@ public class MessageServiceImpl implements MessageService {
                         updateLastReadMessage(databaseMessageKey, emitter.getUser(), msg);
                     }
                     emitter.getPendingMessageRequests().remove(requestId);
+                    aliveEmitters.add(emitter);
                 } catch (IOException e) {
-                    log.info("Closed connection detected, {} remaining for topic {}", clientsInTopic - deadEmitters.size(), key);
-                    deadEmitters.add(emitter.getUser());
+                    log.info("Closed connection detected in topic {}", key);
                 }
             });
         }
-        if(!deadEmitters.isEmpty()){
-            log.info("Could not send message to {} emitter/s. Removing them from list...", deadEmitters.size());
-            value = value.stream()
-                    .filter(clientConnectedToTopic -> !deadEmitters.contains(clientConnectedToTopic.getUser()))
-                    .collect(Collectors.toList());
+        if(!aliveEmitters.isEmpty()){
+            int delta = value.size() - aliveEmitters.size();
+            value = aliveEmitters;
             this.sseEmmiterList.put(key, value);
 
-            int delta = deadEmitters.size();
-            log.info("Decreasing online user gauge by {}", delta);
-            this.onlineUsersGauge.addAndGet(delta);
-            var x = this.onlineUsersGauge.updateAndGet(operand -> operand-delta);
-            log.info("New value: {}", x);
-            if(StringUtils.startsWithIgnoreCase(key, "room")){
-                log.info("Decreasing online room gauge by {}", delta);
-                var y = this.onlineRoomsGauge.updateAndGet(operand -> operand-delta);
-                log.info("New value: {}", y);
+            if(delta > 0) {
+                log.info("Could not send message to {} emitter/s. Removing them from list...", delta);
+                log.info("Decreasing online user gauge by {}", delta);
+                this.onlineUsersGauge.addAndGet(delta);
+                var x = this.onlineUsersGauge.updateAndGet(operand -> operand - delta);
+                log.info("New value: {}", x);
+                if (StringUtils.startsWithIgnoreCase(key, "room")) {
+                    log.info("Decreasing online room gauge by {}", delta);
+                    var y = this.onlineRoomsGauge.updateAndGet(operand -> operand - delta);
+                    log.info("New value: {}", y);
+                }
             }
 
             if(value.isEmpty()){
+                log.info("Emitter list is empty, cleaning up...");
                 this.sseEmmiterList.remove(key);
             }
         }
