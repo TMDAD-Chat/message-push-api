@@ -40,6 +40,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MessageServiceImpl implements MessageService {
 
+    private static final String ROOM_RESENT_MESSAGES_HEADER = "REQUESTED_BY=>";
     private final Map<String, List<ClientConnectedToTopic>> sseEmmiterList = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
     private final MessageTimestampRepository messageTimestampRepository;
@@ -60,7 +61,7 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     @Transactional
-    public void addSseEmmiter(String topic, String user, SseEmitter emitter) {
+    public void addSseEmitter(String topic, String user, SseEmitter emitter) {
         List<String> requests = new ArrayList<>();
         String requestUUID = requestUnreadMessagesForTopicAndUser(topic, user);
         requests.add(requestUUID);
@@ -72,9 +73,6 @@ public class MessageServiceImpl implements MessageService {
         var emmitersForTopic = this.sseEmmiterList.get(topic);
         if(Objects.isNull(emmitersForTopic)){
             emmitersForTopic = Collections.synchronizedList(new ArrayList<>());
-            if(StringUtils.startsWithIgnoreCase(topic, "room")){
-                this.onlineRoomsGauge.incrementAndGet();
-            }
         }
 
         synchronized (emmitersForTopic) {
@@ -85,7 +83,11 @@ public class MessageServiceImpl implements MessageService {
                     .build());
             this.sseEmmiterList.put(topic, emmitersForTopic);
         }
-        this.onlineUsersGauge.incrementAndGet();
+        try {
+            emitter.send("{}");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private String requestUnreadMessagesForTopicAndUser(String topic, String user) {
@@ -132,7 +134,7 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     @Transactional
-    public void removeSseEmmiter(String topic, String user) {
+    public void removeSseEmitter(String topic, String user) {
         log.info("Removing emitter for topic {}.", topic);
         List<ClientConnectedToTopic> emmitersForTopic = this.sseEmmiterList.get(topic);
         if(!Objects.isNull(emmitersForTopic)){
@@ -140,10 +142,6 @@ public class MessageServiceImpl implements MessageService {
                     .filter(clientConnectedToTopic -> !Objects.equals(user, clientConnectedToTopic.getUser()))
                     .collect(Collectors.toList());
             if(!Objects.equals(newEmmiters.size(), emmitersForTopic.size())){
-                this.onlineUsersGauge.decrementAndGet();
-                if(StringUtils.startsWithIgnoreCase(topic, "room") && newEmmiters.isEmpty()){
-                    this.onlineRoomsGauge.decrementAndGet();
-                }
                 this.sseEmmiterList.put(topic, newEmmiters);
             }
 
@@ -154,13 +152,36 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
+    public void updateUsersOnline() {
+        int usersOnline = 0;
+        int roomsOnline = 0;
+        for (Map.Entry<String, List<ClientConnectedToTopic>> entry : this.sseEmmiterList.entrySet()) {
+            String k = entry.getKey();
+            if (StringUtils.startsWithIgnoreCase(k, "room.")) {
+                roomsOnline++;
+                usersOnline += entry.getValue().size();
+            } else if (StringUtils.startsWithIgnoreCase(k, "user.")) {
+                usersOnline++;
+            }
+        }
+
+        this.onlineUsersGauge.set(usersOnline);
+        this.onlineRoomsGauge.set(roomsOnline);
+    }
+
+    @Override
     @Transactional
     public void processMessage(MessageListIn msg) throws IOException {
         if(!msg.getMessages().isEmpty()) {
             switch (msg.getRecipientType()){
                 case ROOM:
                     String topic = "room." + msg.getRecipient();
-                    String user = getUserWhoRequestedMessage(topic, msg.getRequestId());
+                    String user;
+                    if(Objects.nonNull(msg.getRequestId()) && StringUtils.startsWithIgnoreCase(msg.getRequestId(), ROOM_RESENT_MESSAGES_HEADER)){
+                        user = msg.getRequestId().substring(ROOM_RESENT_MESSAGES_HEADER.length());
+                    }else {
+                        user = getUserWhoRequestedMessage(topic, msg.getRequestId());
+                    }
                     forwardMessageToTopic(msg, user, topic);
                     log.info("Received {} messages for user {} in topic room.{}.",
                             msg.getMessages().size(), user, msg.getRecipient());
@@ -200,6 +221,29 @@ public class MessageServiceImpl implements MessageService {
             }
         }
 
+    }
+
+    @Override
+    public void sendHeartBeatToEmitters() {
+        for(var entry : this.sseEmmiterList.entrySet()){
+            var entries = entry.getValue().stream()
+                    .map(e -> {
+                        try {
+                            e.emitter.send("{\"heartbeat\": true}");
+                        } catch (IOException ex) {
+                            log.info("Detected dead emitter on heartbeat: {} for topic {}.", e.user, entry.getKey());
+                            return null;
+                        }
+                        return e;
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            if(!entries.isEmpty()) {
+                this.sseEmmiterList.put(entry.getKey(), entries);
+            }else{
+                this.sseEmmiterList.remove(entry.getKey());
+            }
+        }
     }
 
     private String getUserWhoRequestedMessage(String topic, String requestId) {
@@ -329,15 +373,6 @@ public class MessageServiceImpl implements MessageService {
 
             if(delta > 0) {
                 log.info("Could not send message to {} emitter/s. Removing them from list...", delta);
-                log.info("Decreasing online user gauge by {}", delta);
-                this.onlineUsersGauge.addAndGet(delta);
-                var x = this.onlineUsersGauge.updateAndGet(operand -> operand - delta);
-                log.info("New value: {}", x);
-                if (StringUtils.startsWithIgnoreCase(key, "room")) {
-                    log.info("Decreasing online room gauge by {}", delta);
-                    var y = this.onlineRoomsGauge.updateAndGet(operand -> operand - delta);
-                    log.info("New value: {}", y);
-                }
             }
 
             if(value.isEmpty()){
