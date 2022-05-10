@@ -7,8 +7,11 @@ import java.io.IOException;
 
 public interface MessageService {
 
-    void addSseEmmiter(String topic, String user, SseEmitter emitter);
-    void removeSseEmmiter(String topic, String user);
+    void addSseEmitter(String topic, String user, SseEmitter emitter);
+    void removeSseEmitter(String topic, String user);
+
+    void updateUsersOnline();
     void processMessage(MessageListIn msg) throws IOException;
 
+    void sendHeartBeatToEmitters();
 }

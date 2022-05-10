@@ -24,11 +24,11 @@ public class UserControllerImpl implements UserController {
     public SseEmitter getMessagesOfUser(@PathVariable("id") String username) {
         final SseEmitter emitter = new SseEmitter();
         final String topic = "user." + username;
-        messageService.addSseEmmiter(topic, username, emitter);
+        messageService.addSseEmitter(topic, username, emitter);
 
-        emitter.onError((callback)->messageService.removeSseEmmiter(topic, username));
-        emitter.onCompletion(()->messageService.removeSseEmmiter(topic, username));
-        emitter.onTimeout(()->messageService.removeSseEmmiter(topic, username));
+        emitter.onError((callback)->messageService.removeSseEmitter(topic, username));
+        emitter.onCompletion(()->messageService.removeSseEmitter(topic, username));
+        emitter.onTimeout(()->messageService.removeSseEmitter(topic, username));
 
         log.info("Logging user {}", topic);
 
