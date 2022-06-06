@@ -17,4 +17,9 @@ public class UserServiceImpl implements UserService {
     public UserEntity getUser(String argument){
         return userRepository.findById(argument).orElseThrow();
     }
+
+    @Override
+    public boolean existsUser(String id) {
+        return this.userRepository.existsById(id);
+    }
 }

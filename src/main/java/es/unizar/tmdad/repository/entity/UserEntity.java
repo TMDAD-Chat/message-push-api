@@ -21,6 +21,9 @@ public class UserEntity {
     @Column(name = "name", nullable = false)
     private String name;
 
+    @Column(name = "superuser")
+    private Boolean superuser;
+
     @ManyToMany(mappedBy = "users")
     @ToString.Exclude
     private Set<RoomEntity> rooms = new HashSet<>();

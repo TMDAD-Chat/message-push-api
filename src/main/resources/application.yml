@@ -17,6 +17,7 @@ server:
     
 chat:
   exchanges:
+    users: "user-events"
     input: "output-messages"
     old-messages: "old-message-requests"
 
@@ -35,3 +36,7 @@ spring:
   mvc:
     async:
       request-timeout: -1
+
+firebase:
+  bucket-name: tmdad-chat-app.appspot.com
+  service-account: ./tmdad-chat-app-firebase-adminsdk.json
