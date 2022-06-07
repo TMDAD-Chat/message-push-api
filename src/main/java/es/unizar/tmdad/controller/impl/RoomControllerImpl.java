@@ -5,8 +5,10 @@ import es.unizar.tmdad.controller.exception.UserNotInTheRoomException;
 import es.unizar.tmdad.service.MessageService;
 import es.unizar.tmdad.service.RoomService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -24,8 +26,9 @@ public class RoomControllerImpl implements RoomController {
     }
 
     @Override
-    @GetMapping("/{id}/messages/{user}")
-    public SseEmitter sendNewTextMessage(@PathVariable("id") Long roomId, @PathVariable("user") String username) throws UserNotInTheRoomException {
+    @GetMapping("/{id}/messages")
+    @Transactional
+    public SseEmitter sendNewTextMessage(@PathVariable("id") Long roomId, @RequestHeader("X-Auth-User") String username) throws UserNotInTheRoomException {
 
         if(!roomService.isUserInTheRoom(username,roomId)){
             throw new UserNotInTheRoomException(roomId,username);

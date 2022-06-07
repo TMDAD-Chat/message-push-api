@@ -1,6 +1,7 @@
 package es.unizar.tmdad.config;
 
 import es.unizar.tmdad.listener.MessageListener;
+import es.unizar.tmdad.listener.UserMessageListener;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
@@ -26,12 +27,20 @@ public class RabbitConfiguration {
     @Value("${chat.exchanges.old-messages}")
     private String oldMessagesExchangeName;
 
+    @Value("${chat.exchanges.users}")
+    private String usersExchangeName;
+
     @Value("${spring.application.name}")
     private String appName;
 
     @Bean("rabbitQueue")
     String queueName(){
-        return getQueueName(appName, exchangeName);
+        return getQueueName(appName, exchangeName, true);
+    }
+
+    @Bean("users-exchange")
+    FanoutExchange usersExchange() {
+        return new FanoutExchange(usersExchangeName);
     }
 
     @Bean
@@ -39,8 +48,18 @@ public class RabbitConfiguration {
         return new Queue(queueName, false, true, false);
     }
 
-    private String getQueueName(String appName, String exchangeName) {
-        return appName + "." + exchangeName + "." + UUID.randomUUID();
+    @Bean("users-queue")
+    Queue usersQueue(){
+        return new Queue(getQueueName(appName, usersExchangeName, false), true, false, false);
+    }
+
+    @Bean
+    Binding usersBinding(@Qualifier("users-queue") Queue usersQueue, @Qualifier("users-exchange") FanoutExchange usersExchange){
+        return BindingBuilder.bind(usersQueue).to(usersExchange);
+    }
+
+    private String getQueueName(String appName, String exchangeName, boolean random) {
+        return appName + "." + exchangeName + (random ? "." + UUID.randomUUID() : "");
     }
 
     @Bean("inputExchange")
@@ -72,6 +91,21 @@ public class RabbitConfiguration {
 
     @Bean
     MessageListenerAdapter listenerAdapter(MessageListener receiver) {
+        return new MessageListenerAdapter(receiver, "apply");
+    }
+
+    @Bean
+    SimpleMessageListenerContainer usersContainer(ConnectionFactory connectionFactory,
+                                                  @Qualifier("users-message-listener") MessageListenerAdapter listenerAdapter) {
+        SimpleMessageListenerContainer container = new SimpleMessageListenerContainer();
+        container.setConnectionFactory(connectionFactory);
+        container.setQueueNames(getQueueName(appName, usersExchangeName, false));
+        container.setMessageListener(listenerAdapter);
+        return container;
+    }
+
+    @Bean("users-message-listener")
+    MessageListenerAdapter usersListenerAdapter(UserMessageListener receiver) {
         return new MessageListenerAdapter(receiver, "apply");
     }
 }

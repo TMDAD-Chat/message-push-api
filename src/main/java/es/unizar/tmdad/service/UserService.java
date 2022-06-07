@@ -5,4 +5,6 @@ import es.unizar.tmdad.repository.entity.UserEntity;
 public interface UserService {
 
     UserEntity getUser(String argument);
+
+    boolean existsUser(String argument);
 }
